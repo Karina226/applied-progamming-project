@@ -1,185 +1,299 @@
-#tag 2
-#Wir importieren alle nötigen Werkzeuge für unsere API
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime, timezone
-import json
-from pathlib import Path
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Depends
+from sqlmodel import SQLModel, Field, Session, create_engine, Relationship, select, or_, col
+from pydantic import BaseModel, Field as PydanticField, field_validator, model_validator, ConfigDict
+from typing import List, Optional, Annotated
+from typing_extensions import Self
+from datetime import datetime
+import re
 
+# --- DATENBANK SETUP ---
+sqlite_file_name = "notes.db"
+sqlite_url = f"sqlite:///{sqlite_file_name}"
+connect_args = {"check_same_thread": False}
+engine = create_engine(sqlite_url, connect_args=connect_args)
 
-###############################
-### Note API Endpoints (Tag 2)
-###############################
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db_and_tables()
+    yield
 
-#---DATENMODELLE(Pydantic)---
-# Hier definieren wir, wie unsere Daten aussehen sollen.
-# FastAPI und Pydantic prüfen automatisch, ob die Eingaben der Nutzer dazu passen.
-class NoteCreate(BaseModel):
-    """das Modell für eine NEUE Notiz(Eingabe des Nutzers, noch ohne ID)"""
+app = FastAPI(lifespan=lifespan, title="Notes API", version="2.0.0")
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+# --- SQLMODEL DATENBANK-MODELLE ---
+class NoteTagLink(SQLModel, table=True):
+    note_id: Optional[int] = Field(default=None, foreign_key="notes.id", primary_key=True)
+    tag_id: Optional[int] = Field(default=None, foreign_key="tags.id", primary_key=True)
+
+class Tag(SQLModel, table=True):
+    __tablename__ = "tags"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    notes: List["Note"] = Relationship(back_populates="tags", link_model=NoteTagLink)
+
+class Note(SQLModel, table=True):
+    __tablename__ = "notes"
+    id: Optional[int] = Field(default=None, primary_key=True)
     title: str
     content: str
-    # --- HAUSAUFGABE TASK 1: Kategorie-Feld hinzufügen ---
     category: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    tags: List[Tag] = Relationship(back_populates="notes", link_model=NoteTagLink)
 
-class Note(BaseModel):
-    """das Modell für eine GESPEICHERTE Notiz (Ausgabe der API, mit ID und Zeitstempel)"""
+# --- PYDANTIC VALIDIERUNGS-MODELLE ---
+class NoteCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    
+    title: str = PydanticField(min_length=3, max_length=100)
+    content: str = PydanticField(min_length=1, max_length=10000)
+    category: str = PydanticField(min_length=2, max_length=30, pattern=r"^[a-z]+$")
+    tags: List[str] = PydanticField(default_factory=list, max_length=10)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Title cannot be empty")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, v: str) -> str:
+        allowed = {"work", "personal", "school", "ideas", "general"}
+        v_lower = v.lower()
+        if v_lower not in allowed:
+            raise ValueError(f"Category must be one of {allowed}")
+        return v_lower
+
+    @field_validator("tags")
+    @classmethod
+    def clean_tags(cls, raw: List[str]) -> List[str]:
+        cleaned = []
+        seen = set()
+        for tag in raw:
+            t = tag.lower()
+            if len(t) < 2:
+                raise ValueError("Tags must be at least 2 chars long")
+            if not re.match(r"^[a-z0-9-]+$", t):
+                raise ValueError("Tags must contain only lowercase letters, numbers, and dashes")
+            if t not in seen:
+                seen.add(t)
+                cleaned.append(t)
+        return cleaned
+
+    @model_validator(mode="after")
+    def work_notes_need_work_tag(self) -> Self:
+        if self.category == "work" and "work" not in self.tags:
+            raise ValueError("work notes must include the 'work' tag")
+        return self
+
+class NoteUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    title: Optional[str] = PydanticField(default=None, min_length=3, max_length=100)
+    content: Optional[str] = PydanticField(default=None, min_length=1, max_length=10000)
+    category: Optional[str] = PydanticField(default=None, min_length=2, max_length=30, pattern=r"^[a-z]+$")
+    tags: Optional[List[str]] = PydanticField(default=None, max_length=10)
+
+class NoteResponse(BaseModel):
     id: int
     title: str
     content: str
-    # --- HAUSAUFGABE TASK 1: Kategorie-Feld hinzufügen ---
     category: str
+    tags: List[str]
     created_at: str
-
-
-# --- SPEICHER & DATENBANK-SETUP ---
-# Da wir noch keine "echte" Datenbank wie SQL haben, speichern wir die Notizen
-# in einer Liste im Arbeitsspeicher und parallel in einer JSON-Datei auf einer der Festplatte.
-
-notes_db = []       #Unsere "In-Memory" Datenbank (Liste mit Notizen)
-note_id_counter = 1        #Zähler, der jedem neuen Eintrag eine automatische ID gibt
-NOTES_FILE = Path("data/notes.json")
-
-
-# --- DATEI-FUNKTIONEN (Persistenz) ---
-
-def load_notes():
-    """Lädt die Notizen aus der JSON-Datei, wenn der Server startet."""
-    global notes_db, note_id_counter    # Wir greifen auf die globalen Variablen zu
-
-# Prüfen, ob die Datei überhaupt schon existiert
-    if NOTES_FILE.exists():
-        with open(NOTES_FILE, 'r') as f:  # WARUM 'R' UND F????
-            data = json.load(f) #JSON-Text in Python-Daten(Dictionaries) umwandeln
-            #Jedes Dictionary aus der Datei wieder in ein Note-Objekt umwandeln
-            notes_db = [Note(**note) for note in data]
-
-            # Den Zähler für die nächste ID aktualisieren (höchste ID + 1)
-            if notes_db:
-                note_id_counter = max(note.id for note in notes_db) + 1
-
-    #return notes_db, note_id_counter
-
-
-def save_notes():
-    """Speichert die aktuellen Notizen aus dem Arbeitsspeicher in die JSON-Datei."""
-    #NOTES_FILE.parent.mkdir(parents=True, exist_ok=True) #WAS BIST DU ????
-
-    with open(NOTES_FILE, 'w') as f:
-        # Alle Note-Objekte in Dictionaries umwandeln (für JSON nötig)
-        notes_data = [note.dict() for note in notes_db]
-        json.dump(notes_data, f, indent=2)
-
-# --- FASTAPI APP SETUP ---
-# Hier erstellen wir die eigentliche API-Anwendung
-app = FastAPI(
-    title= "Applied Programming Course HS-Coburg",
-    description="Simple note management API",
-    version="1.0.0"
-)      
-
-#Wir rufen direkt beim Start die Lade-Funktion auf, damit alte Notizen nicht weg sind
-load_notes()
-
-# --- ENDPUNKTE (Routen) ---
-
-@app.post("/notes", status_code=201)
-def create_note(note: NoteCreate) -> Note:
-    """Erstellt eine neue Notiz und speichert sie.""" #doc-string
-    global note_id_counter
-# Wir erstellen ein neues Note-Objekt aus den Eingaben (inkl. Task 1: Kategorie)
-    #notes_db, note_id_counter = load_notes() #WAS IST DAS??
-    new_note = Note(
-        id=note_id_counter,
-        title=note.title,
-        content=note.content,
-        category = note.category, #--- HAUSAUFGABE TASK 1: Kategorie beim Erstellen übernehmen ---
-        created_at=datetime.now(timezone.utc).isoformat()  #utc = universal time code 
-    )
-
-    notes_db.append(new_note) #zur internen Liste hinzufügen
-    note_id_counter += 1     #Zähler für die nächste Notiz hochsetzen
-
-    save_notes()    #in die notes.json Datei speichern, damit sie nicht verloren geht
-    return new_note     #Die erstellte Notiz als Bestätigung zurückgeben
-
-# im Terminal "uv run fastapi dev" und dann return drücken
-# nicht zwei mal Execute auf website drücken
-
-@app.get("/notes")
-def list_notes() -> list[Note]:
-    """Gibt eine Liste ALLER gespeicherten Notizen zurück"""
-    #notes_db, counter = load_notes()
-    return notes_db
-
-
-@app.get("/notes/{note_id}")
-def get_note(note_id: int):
-    """Sucht und gibt eine ganz bestimmte Notiz anhand ihrer ID zurück."""
-    for note in notes_db:
-        if note.id == note_id:
-            return note # Notiz gefunden -> zurückgeben
     
-    # Wenn die Schleife durchläuft ohne etwas zu finden, geben wir einen 404 Fehler aus
-    raise HTTPException(
-        status_code=404,
-        detail=f"Note with ID {note_id} not found"
-    )
-#ich führe eine Daten-Migration durch in notes.json durch und füge meine Kategorie ein!!! sonst ERROR sonst kann ich kein 'category' einfügen ODER Datei löschen
+    class Config:
+        from_attributes = True
 
-# ==========================================
-# --- HAUSAUFGABE TASK 2: Filter by Category ---
-# ==========================================
-@app.get("/notes/category/{category}")
-def get_notes_by_category(category: str):
-    """Gibt alle Notizen zurück, die zu einer bestimmten Kategorie gehören."""
-    filtered_notes = [] # Eine leere Liste für die Ergebnisse
-    
-    for note in notes_db:
-        # Wenn die Kategorie der Notiz mit der gesuchten übereinstimmt...
-        if note.category == category:
-            filtered_notes.append(note) # ...fügen wir sie zur Ergebnis-Liste hinzu
-            
-    return filtered_notes
+# --- ENDPUNKTE ---
 
-# ==========================================
-# --- HAUSAUFGABE TASK 3: Add Statistics Endpoint ---
-# ==========================================
-@app.get("/notes/stats")
-def get_notes_stats():
-    """Gibt Statistiken über die gespeicherten Notizen zurück."""
-    categories = {} # Ein leeres Dictionary zum Zählen
+@app.post("/notes", status_code=201, response_model=NoteResponse)
+def create_note(note: NoteCreate, session: SessionDep):
+    db_note = Note(title=note.title, content=note.content, category=note.category)
     
-    # Wir gehen jede Notiz durch
-    for note in notes_db:
-        # Wenn wir die Kategorie schon kennen, zählen wir +1
-        if note.category in categories:
-            categories[note.category] += 1
-        # Wenn die Kategorie neu ist, setzen wir den Zähler auf 1
+    tag_objects = []
+    for tag_name in note.tags:
+        statement = select(Tag).where(Tag.name == tag_name)
+        existing_tag = session.exec(statement).first()
+        if existing_tag:
+            tag_objects.append(existing_tag)
         else:
-            categories[note.category] = 1
+            new_tag = Tag(name=tag_name)
+            session.add(new_tag)
+            tag_objects.append(new_tag)
             
-    # Wir geben ein Dictionary zurück, das FastAPI in JSON umwandelt
+    db_note.tags = tag_objects
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note)
+    
+    return format_note_response(db_note)
+
+@app.get("/notes", response_model=List[NoteResponse])
+def list_notes(
+    session: SessionDep,
+    category: str = None,
+    search: str = None,
+    tag: str = None,
+    created_after: str = None,
+    created_before: str = None
+):
+    statement = select(Note)
+    
+    if category:
+        statement = statement.where(Note.category == category)
+    if search:
+        search_lower = search.lower()
+        statement = statement.where(
+            or_(
+                col(Note.title).ilike(f"%{search_lower}%"),
+                col(Note.content).ilike(f"%{search_lower}%")
+            )
+        )
+    if tag:
+        tag_lower = tag.lower()
+        statement = statement.join(Note.tags).where(Tag.name == tag_lower)
+    if created_after:
+        statement = statement.where(Note.created_at >= datetime.fromisoformat(created_after))
+    if created_before:
+        statement = statement.where(Note.created_at <= datetime.fromisoformat(created_before))
+        
+    notes = session.exec(statement).all()
+    return [format_note_response(n) for n in notes]
+
+@app.get("/notes/stats")
+def get_note_stats(session: SessionDep):
+    notes = session.exec(select(Note)).all()
+    
+    categories = {}
+    tag_counts = {}
+    
+    for note in notes:
+        categories[note.category] = categories.get(note.category, 0) + 1
+        for tag in note.tags:
+            tag_counts[tag.name] = tag_counts.get(tag.name, 0) + 1
+            
+    top_tags = [{"tag": k, "count": v} for k, v in sorted(tag_counts.items(), key=lambda item: item[1], reverse=True)[:5]]
+    
     return {
-        "total_notes": len(notes_db), # Anzahl ALLER Notizen
-        "by_category": categories     # Die gezählten Kategorien
+        "total_notes": len(notes),
+        "by_category": categories,
+        "top_tags": top_tags,
+        "unique_tags_count": len(tag_counts)
     }
 
-# ==========================================
-# --- HAUSAUFGABE BONUS: Delete Endpoint ---
-# ==========================================
-@app.delete("/notes/{note_id}")
-def delete_note(note_id: int):
-    """Löscht eine bestimmte Notiz anhand ihrer ID."""
-    # enumerate() gibt uns gleichzeitig den Index (i) und die Notiz in der Liste
-    for i, note in enumerate(notes_db):
-        if note.id == note_id:
-            notes_db.pop(i) # Entfernt das Element an der Stelle 'i' aus der Liste
-            save_notes()    # Datei aktualisieren, damit es auch auf der Festplatte weg ist
-            return {"message": "Note deleted"}
+@app.get("/notes/{note_id}", response_model=NoteResponse)
+def get_note(note_id: int, session: SessionDep):
+    note = session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return format_note_response(note)
+
+@app.put("/notes/{note_id}", response_model=NoteResponse)
+def update_note(note_id: int, note_update: NoteCreate, session: SessionDep):
+    db_note = session.get(Note, note_id)
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Note not found")
+        
+    db_note.title = note_update.title
+    db_note.content = note_update.content
+    db_note.category = note_update.category
+    
+    tag_objects = []
+    for tag_name in note_update.tags:
+        existing_tag = session.exec(select(Tag).where(Tag.name == tag_name)).first()
+        if existing_tag:
+            tag_objects.append(existing_tag)
+        else:
+            new_tag = Tag(name=tag_name)
+            session.add(new_tag)
+            tag_objects.append(new_tag)
             
-    # Wenn wir die ID nicht finden, Fehler 404 werfen
-    raise HTTPException(status_code=404, detail="Note not found")
+    db_note.tags = tag_objects
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note)
+    return format_note_response(db_note)
 
+@app.patch("/notes/{note_id}", response_model=NoteResponse)
+def partial_update_note(note_id: int, note_update: NoteUpdate, session: SessionDep):
+    db_note = session.get(Note, note_id)
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Note not found")
+        
+    update_data = note_update.model_dump(exclude_unset=True)
+    
+    if "title" in update_data:
+        db_note.title = update_data["title"]
+    if "content" in update_data:
+        db_note.content = update_data["content"]
+    if "category" in update_data:
+        db_note.category = update_data["category"]
+        
+    if "tags" in update_data:
+        tag_objects = []
+        for tag_name in update_data["tags"]:
+            existing_tag = session.exec(select(Tag).where(Tag.name == tag_name)).first()
+            if existing_tag:
+                tag_objects.append(existing_tag)
+            else:
+                new_tag = Tag(name=tag_name)
+                session.add(new_tag)
+                tag_objects.append(new_tag)
+        db_note.tags = tag_objects
 
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note)
+    return format_note_response(db_note)
 
+@app.delete("/notes/{note_id}", status_code=204)
+def delete_note(note_id: int, session: SessionDep):
+    note = session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    session.delete(note)
+    session.commit()
+    return
+
+@app.get("/tags", response_model=List[str])
+def list_tags(session: SessionDep):
+    tags = session.exec(select(Tag)).all()
+    return sorted([tag.name for tag in tags])
+
+@app.get("/tags/{tag_name}/notes", response_model=List[NoteResponse])
+def get_notes_by_tag(tag_name: str, session: SessionDep):
+    tag = session.exec(select(Tag).where(Tag.name == tag_name.lower())).first()
+    if not tag:
+        return []
+    return [format_note_response(note) for note in tag.notes]
+
+@app.get("/categories", response_model=List[str])
+def list_categories(session: SessionDep):
+    notes = session.exec(select(Note)).all()
+    categories = set(note.category for note in notes)
+    return sorted(list(categories))
+
+@app.get("/categories/{category_name}/notes", response_model=List[NoteResponse])
+def get_notes_by_category(category_name: str, session: SessionDep):
+    notes = session.exec(select(Note).where(Note.category == category_name.lower())).all()
+    return [format_note_response(note) for note in notes]
+
+def format_note_response(db_note: Note) -> NoteResponse:
+    return NoteResponse(
+        id=db_note.id,
+        title=db_note.title,
+        content=db_note.content,
+        category=db_note.category,
+        tags=[tag.name for tag in db_note.tags],
+        created_at=db_note.created_at.isoformat()
+    )
