@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "title": "huhu",
+    "content": "okay, nein, ja",
+    "category": "allgemein",
+    "created_at": "2026-04-28T09:40:33.644286+00:00"
+  },
+  {
+    "id": 2,
+    "title": "Exam Prep",
+    "content": "Study chapters 1-5",
+    "category": "study",
+    "created_at": "2026-04-28T16:08:54.996587+00:00"
+  },
+  {
+    "id": 3,
+    "title": "ToDos",
+    "content": "Einkaufen, Staubsaugen, Lernen",
+    "category": "Alltag",
+    "created_at": "2026-04-29T15:33:33.518784+00:00"
+  }
+]

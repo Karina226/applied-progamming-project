@@ -1,0 +1,291 @@
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from typing import Optional, Annotated
+from datetime import datetime
+from sqlmodel import SQLModel, Field, Session, create_engine, Relationship, select, or_, col
+from collections import Counter
+
+# ==========================================
+# --- DATENBANK-MODELLE (SQLModel) ---
+# Diese Modelle definieren die Tabellen in unserer SQLite-Datenbank.
+# ==========================================
+
+# Da eine Notiz viele Tags haben kann und ein Tag zu vielen Notizen gehören kann,
+# brauchen wir eine sogenannte "Link-Tabelle" (Many-to-Many Beziehung).
+class NoteTagLink(SQLModel, table=True):
+    note_id: Optional[int] = Field(default=None, foreign_key="notes.id", primary_key=True)
+    tag_id: Optional[int] = Field(default=None, foreign_key="tags.id", primary_key=True)
+
+class Tag(SQLModel, table=True):
+    __tablename__ = 'tags'
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True) # Der Tag-Name darf nur einmal existieren
+    
+    # Beziehung zurück zu den Notizen
+    notes: list["Note"] = Relationship(back_populates="tags", link_model=NoteTagLink)
+
+class Note(SQLModel, table=True):
+    __tablename__ = 'notes'
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str
+    content: str
+    category: str
+    # Speichert den Zeitstempel der Erstellung (wird automatisch gesetzt)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    
+    # Beziehung zu den Tags
+    tags: list[Tag] = Relationship(back_populates="notes", link_model=NoteTagLink)
+
+
+# ==========================================
+# --- API-MODELLE (Pydantic) ---
+# Diese Modelle definieren, was der Nutzer eingibt (Input) und was wir zurückgeben (Output).
+# ==========================================
+
+class NoteCreate(BaseModel):
+    title: str
+    content: str
+    category: str
+    tags: list[str] = [] # Standardmäßig eine leere Liste
+
+# HAUSAUFGABE TASK 4: Das Modell für PATCH (Teil-Updates). Alles ist "Optional".
+class NoteUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+class NoteResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+    category: str
+    tags: list[str]
+    created_at: str
+
+
+# ==========================================
+# --- DATENBANK-SETUP ---
+# ==========================================
+
+# Verbindet uns mit einer SQLite-Datei namens "notes.db"
+engine = create_engine("sqlite:///notes.db")
+
+# Erstellt alle Tabellen in der Datei (falls sie noch nicht existieren)
+SQLModel.metadata.create_all(engine)
+
+def get_session():
+    """Erstellt für jede Anfrage eine neue Datenbank-Verbindung."""
+    with Session(engine) as session:
+        yield session
+
+# Shortcut für FastAPI, damit wir "session: SessionDep" schreiben können
+SessionDep = Annotated[Session, Depends(get_session)]
+
+app = FastAPI(title="Note API v2.0 - REST & Database")
+
+
+# ==========================================
+# --- ENDPUNKTE (REST CRUD) ---
+# ==========================================
+
+@app.post("/notes", status_code=201)
+def create_note(note: NoteCreate, session: SessionDep) -> NoteResponse:
+    """Erstellt eine neue Notiz und speichert sie in der Datenbank."""
+    db_note = Note(title=note.title, content=note.content, category=note.category)
+    
+    # Tags verarbeiten (suchen oder neu anlegen)
+    for tag_name in note.tags:
+        tag_name_lower = tag_name.lower().strip()
+        if not tag_name_lower:
+            continue
+            
+        # Prüfen, ob der Tag schon existiert
+        statement = select(Tag).where(Tag.name == tag_name_lower)
+        existing_tag = session.exec(statement).first()
+        
+        if existing_tag:
+            db_note.tags.append(existing_tag)
+        else:
+            new_tag = Tag(name=tag_name_lower)
+            session.add(new_tag)
+            db_note.tags.append(new_tag)
+            
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note) # ID aus der DB laden
+    
+    return NoteResponse(
+        id=db_note.id, title=db_note.title, content=db_note.content, 
+        category=db_note.category, tags=[t.name for t in db_note.tags], created_at=db_note.created_at
+    )
+
+# HAUSAUFGABE TASK 1 & 5: Listen mit kombinierten Filtern und Datum!
+@app.get("/notes")
+def list_notes(
+    session: SessionDep,
+    category: str = None,
+    search: str = None,
+    tag: str = None,
+    created_after: str = None, # Task 5
+    created_before: str = None # Task 5
+) -> list[NoteResponse]:
+    
+    statement = select(Note)
+    
+    # Filter anwenden
+    if category:
+        statement = statement.where(Note.category == category)
+    if search:
+        search_lower = search.lower()
+        statement = statement.where(
+            or_(col(Note.title).ilike(f"%{search_lower}%"), col(Note.content).ilike(f"%{search_lower}%"))
+        )
+    if tag:
+        tag_lower = tag.lower()
+        statement = statement.join(Note.tags).where(Tag.name == tag_lower)
+    if created_after:
+        statement = statement.where(Note.created_at >= created_after)
+    if created_before:
+        statement = statement.where(Note.created_at <= created_before)
+        
+    notes = session.exec(statement).all()
+    
+    return [
+        NoteResponse(id=n.id, title=n.title, content=n.content, category=n.category, 
+                     tags=[t.name for t in n.tags], created_at=n.created_at)
+        for n in notes
+    ]
+
+@app.get("/notes/{note_id}")
+def get_note(note_id: int, session: SessionDep) -> NoteResponse:
+    note = session.get(Note, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Not found")
+    return NoteResponse(id=note.id, title=note.title, content=note.content, 
+                        category=note.category, tags=[t.name for t in note.tags], created_at=note.created_at)
+
+@app.put("/notes/{note_id}")
+def update_note(note_id: int, note_update: NoteCreate, session: SessionDep) -> NoteResponse:
+    """Überschreibt eine komplette Notiz."""
+    db_note = session.get(Note, note_id)
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Not found")
+        
+    db_note.title = note_update.title
+    db_note.content = note_update.content
+    db_note.category = note_update.category
+    
+    # Alte Tags löschen und neue setzen
+    db_note.tags.clear()
+    for tag_name in note_update.tags:
+        t_name = tag_name.lower().strip()
+        tag = session.exec(select(Tag).where(Tag.name == t_name)).first()
+        if not tag:
+            tag = Tag(name=t_name)
+            session.add(tag)
+        db_note.tags.append(tag)
+        
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note)
+    
+    return NoteResponse(id=db_note.id, title=db_note.title, content=db_note.content, 
+                        category=db_note.category, tags=[t.name for t in db_note.tags], created_at=db_note.created_at)
+
+# HAUSAUFGABE TASK 4: PATCH Endpunkt
+@app.patch("/notes/{note_id}")
+def partial_update_note(note_id: int, note_update: NoteUpdate, session: SessionDep) -> NoteResponse:
+    """Aktualisiert nur die mitgelieferten Felder einer Notiz."""
+    db_note = session.get(Note, note_id)
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Not found")
+        
+    # Nur ändern, wenn das Feld auch mitgeschickt wurde
+    if note_update.title is not None:
+        db_note.title = note_update.title
+    if note_update.content is not None:
+        db_note.content = note_update.content
+    if note_update.category is not None:
+        db_note.category = note_update.category
+        
+    if note_update.tags is not None:
+        db_note.tags.clear()
+        for tag_name in note_update.tags:
+            t_name = tag_name.lower().strip()
+            tag = session.exec(select(Tag).where(Tag.name == t_name)).first()
+            if not tag:
+                tag = Tag(name=t_name)
+                session.add(tag)
+            db_note.tags.append(tag)
+            
+    session.add(db_note)
+    session.commit()
+    session.refresh(db_note)
+    
+    return NoteResponse(id=db_note.id, title=db_note.title, content=db_note.content, 
+                        category=db_note.category, tags=[t.name for t in db_note.tags], created_at=db_note.created_at)
+
+@app.delete("/notes/{note_id}", status_code=204)
+def delete_note(note_id: int, session: SessionDep):
+    db_note = session.get(Note, note_id)
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Not found")
+    session.delete(db_note)
+    session.commit()
+    return
+
+
+# ==========================================
+# --- EXTRA RESSOURCEN (Tags, Categories, Stats) ---
+# ==========================================
+
+# HAUSAUFGABE TASK 2: Stats Endpunkt
+@app.get("/notes/stats")
+def get_note_stats(session: SessionDep):
+    notes = session.exec(select(Note)).all()
+    tags = session.exec(select(Tag)).all()
+    
+    categories_counter = Counter(n.category for n in notes)
+    
+    # Tags zählen
+    tag_counter = Counter()
+    for n in notes:
+        for t in n.tags:
+            tag_counter[t.name] += 1
+            
+    # Format für die Top 5 Tags
+    top_tags = [{"tag": t[0], "count": t[1]} for t in tag_counter.most_common(5)]
+    
+    return {
+        "total_notes": len(notes),
+        "by_category": dict(categories_counter),
+        "top_tags": top_tags,
+        "unique_tags_count": len(tags)
+    }
+
+@app.get("/tags")
+def list_tags(session: SessionDep) -> list[str]:
+    tags = session.exec(select(Tag)).all()
+    return sorted([t.name for t in tags])
+
+@app.get("/tags/{tag_name}/notes")
+def get_notes_by_tag(tag_name: str, session: SessionDep) -> list[NoteResponse]:
+    tag = session.exec(select(Tag).where(Tag.name == tag_name.lower())).first()
+    if not tag:
+        return []
+    return [NoteResponse(id=n.id, title=n.title, content=n.content, category=n.category, 
+                         tags=[t.name for t in n.tags], created_at=n.created_at) for n in tag.notes]
+
+# HAUSAUFGABE TASK 3: Categories Endpunkte
+@app.get("/categories")
+def list_categories(session: SessionDep) -> list[str]:
+    notes = session.exec(select(Note)).all()
+    categories = {n.category for n in notes} # Set filtert Duplikate raus
+    return sorted(list(categories))
+
+@app.get("/categories/{category_name}/notes")
+def get_notes_by_category(category_name: str, session: SessionDep) -> list[NoteResponse]:
+    notes = session.exec(select(Note).where(Note.category == category_name)).all()
+    return [NoteResponse(id=n.id, title=n.title, content=n.content, category=n.category, 
+                         tags=[t.name for t in n.tags], created_at=n.created_at) for n in notes]
