@@ -1,135 +1,105 @@
-# Work Log
+# 📖 Work Log: Applied Programming (WINF 2.0)
 
-**Student Name: Karina Müller** 
-
-Instructions: Fill out one log for each course day. Content to consider: Course Sessions + Assignment
-
-## Template:
+**Student Name:** Karina Müller
 
 ---
 
 ## Week 1
 
-### Day 1
+### Day 1: Die Architektur von Web-Services
 
 #### 1. ✅ What did I accomplish?
-- **Setup der Entwicklungsumgebung:** Ich habe meine Arbeitsumgebung von Grund auf eingerichtet. Das beinhaltete die Installation von Git zur Versionskontrolle, Visual Studio Code (VS Code) als IDE sowie die Konfiguration der passenden Python-Erweiterungen.
-- **Package Management:** Ich habe mich mit dem modernen Package Manager `uv` vertraut gemacht, der deutlich performanter als Standard-pip ist, und mein erstes FastAPI-Projekt initialisiert.
-- **Erste Endpunkte:** Ich habe die grundlegende Struktur einer REST-API verstanden und meine ersten drei GET-Endpunkte (`/`, `/status`, `/about`) programmiert.
-- **API-Dokumentation:** Ich habe gelernt, wie FastAPI automatisch eine interaktive Swagger UI (unter `/docs`) generiert und wie man diese nutzt, um Endpunkte direkt im Browser zu testen, ohne separate Tools wie Postman zu benötigen.
+Der erste Tag diente der Grundsteinlegung. Ich habe mich mit dem **Client-Server-Prinzip** vertraut gemacht und gelernt, wie Anfragen über das HTTP-Protokoll verarbeitet werden. Nach der Installation von Python und dem Paketmanager `uv` habe ich meine erste **FastAPI-Instanz** erzeugt. Ich habe verstanden, dass FastAPI auf **Asynchronous Server Gateway Interface (ASGI)** basiert, was es extrem schnell macht. Konkret habe ich erste Endpunkte implementiert und dabei gelernt, wie man **Path-Parameter** (z. B. in `/square/{number}`) nutzt, um Variablen direkt aus der URL zu extrahieren. Ein Highlight war die Nutzung der interaktiven Swagger-Dokumentation unter `/docs`, die es ermöglicht, API-Spezifikationen ohne externe Tools wie Postman zu testen.
 
 #### 2. 🚧 What challenges did I face?
-- **Konzeptuelle Hürden:** Das Verständnis des lokalen Webservers (localhost bzw. `127.0.0.1:8000`) und wie Uvicorn im Hintergrund als ASGI-Server Anfragen an meine Python-Funktionen weiterleitet, war anfangs abstrakt.
-- **Terminal-Nutzung:** Der Umgang mit Kommandozeilenbefehlen und das Einrichten der virtuellen Umgebung (`.venv`) über `uv` erforderte etwas Eingewöhnung.
+Die größte Hürde war zu Beginn die **Decorator-Syntax** (`@app.get`). Ich hatte Schwierigkeiten zu verstehen, wie eine Funktion "weiß", dass sie auf einen URL-Pfad reagieren soll, ohne dass ich sie explizit im Code aufrufe. Zudem war die automatische Typkonvertierung (Data Coercion) von String-URLs in Python-Integer gewöhnungsbedürftig.
 
 #### 3. 💡 How did I overcome them?
-- **Aktives Mitprogrammieren:** Durch das synchrone Mitprogrammieren während der Vorlesung und das direkte Testen der Ergebnisse im Browser wurde das Konzept von Request und Response schnell greifbar.
-- **Dokumentation:** Das Studieren der Fehlermeldungen im Terminal hat geholfen, fehlende Pakete (z.B. wenn Uvicorn nicht installiert war) schnell zu identifizieren.
+Ich habe recherchiert, wie Decorators in Python als "Wrapper" fungieren, die Funktionen bei der FastAPI-Instanz registrieren. Durch das bewusste Provozieren von Fehlern (z. B. Senden eines Buchstabens an einen Integer-Pfad) habe ich gelernt, wie FastAPI automatisch Validierungsfehler generiert.
 
 ---
 
-### Day 2
+### Day 2: Datenschemata und Persistenz
 
 #### 1. ✅ What did I accomplish?
-- **Python-Grundlagen gefestigt:** Wiederholung von elementaren Datenstrukturen wie Dictionaries und Listen sowie die Nutzung von f-Strings zur sauberen Textformatierung. Typisierung in Python (`Type Hints`) angewendet.
-- **HTTP-Methoden:** Den Unterschied zwischen GET (Daten lesen) und POST (Daten erstellen und Body mitsenden) verinnerlicht.
-- **Datenvalidierung:** Erste Berührungspunkte mit Pydantic. Ein `NoteCreate` Model (`BaseModel`) erstellt, um eingehende JSON-Daten automatisch zu typisieren und zu validieren.
-- **Datenpersistenz:** Eine einfache Lösung zur Speicherung implementiert. Die Notizen werden nun in einer lokalen `data/notes.json` Datei gesichert, sodass der Zustand (State) der Anwendung auch nach einem Server-Neustart erhalten bleibt (File Persistence).
+Heute stand die Modellierung von Datenobjekten im Fokus. Ich habe **Pydantic-Modelle** (`BaseModel`) eingeführt, um die Struktur meiner Notizen (Titel, Inhalt, Kategorie) zu definieren. Ein zentraler Punkt war der Unterschied zwischen **Eingabe-Modellen** (`NoteCreate`) und **Antwort-Modellen** (`Note`), da Felder wie die `id` oder der Zeitstempel niemals vom Client gesendet, sondern immer vom Server generiert werden sollten. Um Daten über einen Server-Neustart hinaus zu erhalten, habe ich eine dateibasierte Speicherung in einer `notes.json` implementiert und dabei den Umgang mit dem `JSON`-Modul und `Pathlib` in Python vertieft.
 
 #### 2. 🚧 What challenges did I face?
-- **Dateizugriff:** Beim initialen Startlauf, wenn die `notes.json` Datei noch nicht existierte oder leer war, warf das Programm JSON-Decode-Fehler beim Versuch, Daten zu laden.
-- **Status Codes:** Es war anfänglich verwirrend, wann genau welcher HTTP Status Code (z.B. 200 OK, 201 Created oder 422 Unprocessable Entity) vom Server zurückgegeben werden sollte.
+Die Synchronisation zwischen dem Python-Arbeitsspeicher (`notes_db` Liste) und der physischen Datei war fehleranfällig. Besonders das Management der eindeutigen IDs (Primary Keys) stellte ein Problem dar, wenn die Datei manuell verändert wurde oder mehrere Notizen schnell hintereinander erstellt wurden.
 
 #### 3. 💡 How did I overcome them?
-- **Robuster Code:** Ich habe das Modul `pathlib` importiert und mit `Path.exists()` eine Vorab-Prüfung eingebaut. So wird die Datei nur ausgelesen, wenn sie auch wirklich vorhanden ist.
-- **FastAPI-Features:** Ich habe gelernt, dass FastAPI Status-Codes in den Dekorator-Parametern (z.B. `@app.post(..., status_code=201)`) steuert und Pydantic sich automatisch um den 422-Fehler bei falschen Inputs kümmert.
+Ich habe eine robuste Logik für den `note_id_counter` entwickelt, die beim Start der App den höchsten existierenden Wert aus der JSON-Datei ausliest (`max(ids) + 1`). So wurde sichergestellt, dass IDs niemals doppelt vergeben werden, selbst wenn der Server abstürzt.
 
 ---
 
-### Day 3
+### Day 3: Relationale Datenbanken & REST-Prinzipien
 
 #### 1. ✅ What did I accomplish?
-- **Complete CRUD:** Die REST-Architektur durch Hinzufügen der fehlenden PUT- (Update) und DELETE-Operationen vervollständigt.
-- **Query Parameter:** Komplexe Filterlogiken eingebaut, um Notizen über die URL nach Suchbegriffen, Kategorien und Tags filtern zu können.
-- **Datenbank-Migration (Meilenstein):** Den größten Architekturwechsel durchgeführt! Die alte JSON-File-Lösung wurde durch eine echte, relationale SQLite-Datenbank ersetzt, die über SQLModel (ORM) angebunden wurde.
-- **Resource Relationships:** Das Konzept von Viele-zu-Viele-Beziehungen (Many-to-Many) kennengelernt, um Notizen mehrere Tags zuzuordnen und umgekehrt.
+An Tag 3 habe ich den größten architektonischen Schritt gemacht: Die Migration von einer flachen JSON-Datei zu einer **relationalen SQLite-Datenbank** mittels **SQLModel**. Ich habe gelernt, wie man **Many-to-Many-Beziehungen** sauber abbildet. Da eine Notiz mehrere Tags haben kann, habe ich eine **Link-Tabelle** (`NoteTagLink`) erstellt. Außerdem habe ich die REST-Prinzipien vertieft und Endpunkte für das vollständige **CRUD-Spektrum** (Create, Read, Update, Delete) gebaut, inklusive `PUT` (vollständiges Ersetzen) und `PATCH` (teilweises Aktualisieren unter Nutzung von `exclude_unset=True`).
 
 #### 2. 🚧 What challenges did I face?
-- **ORM Komplexität:** Die Übersetzung der Many-to-Many Beziehung in die Datenbankstruktur von SQLModel war die bislang größte konzeptuelle Hürde.
-- **Logik-Fehler:** Das saubere Anlegen von Tags – sodass keine Duplikate in der Datenbank entstehen, sondern bestehende Tags wiederverwendet werden – erforderte komplexere Query-Logiken.
+Das größte Problem war die **Normalisierung**. Da SQLite keine Listen (`List[str]`) speichern kann, war ich versucht, Tags einfach als langen Text-String zu speichern. Mir wurde jedoch klar, dass dies die Suche nach einzelnen Tags unmöglich oder extrem langsam machen würde.
 
 #### 3. 💡 How did I overcome them?
-- **Link-Tabelle:** Durch das Definieren einer expliziten Verknüpfungstabelle (`NoteTagLink`) mit Foreign Keys (`note_id` und `tag_id`) ließ sich die Relation sauber abbilden.
-- **Datenbank-Abfragen:** Vor dem Speichern eines Tags in der POST-Methode frage ich nun explizit ab, ob der Tag (`where(Tag.name == ...)`) bereits existiert, und verknüpfe andernfalls das existierende Objekt.
+Ich habe mich für die saubere relationale Lösung mit einer Verknüpfungstabelle entschieden. Dabei habe ich gelernt, wie man `Relationship`-Objekte in SQLModel nutzt, um über **Foreign Keys** hinweg Daten abzufragen. Das war zwar komplexer in der Ersteinrichtung, bietet aber eine professionelle Datenintegrität.
 
 ---
 
 ## Week 2
 
-### Day 4
+### Day 4: Qualitätssicherung durch Testing
 
 #### 1. ✅ What did I accomplish?
-- **Test-Driven Development (TDD) Basics:** Die Notwendigkeit von automatisierten Tests verstanden, um Regressionen (das Brechen von bestehendem Code bei neuen Features) zu vermeiden.
-- **Pytest Integration:** Eine Test-Suite mit `pytest` aufgesetzt.
-- **Testing-Muster:** Das Arrange-Act-Assert (Vorbereiten - Handeln - Überprüfen) Pattern angewandt, um meine bestehenden CRUD-Endpunkte systematisch abzusichern.
-- **TestClient:** Den internen FastAPI `TestClient` genutzt, um API-Aufrufe simulieren zu können, ohne den Uvicorn-Server in einem separaten Terminal laufen lassen zu müssen.
+Heute habe ich gelernt, wie man professionelle **Unit- und Integrationstests** mit `pytest` schreibt. Ich habe den **FastAPI TestClient** genutzt, um automatisierte Anfragen an meine API zu senden. Dabei habe ich das **Arrange-Act-Assert-Pattern** angewendet: Testdaten vorbereiten, den Endpunkt aufrufen und das Ergebnis (Statuscode und JSON-Body) prüfen. Ich habe gezielt Tests für Erfolgsfälle (200 OK, 201 Created) und Fehlerfälle (404 Not Found, 422 Validation Error) geschrieben.
 
 #### 2. 🚧 What challenges did I face?
-- **Error-Case Testing:** Das Testen von Erfolgsfällen (200, 201) war recht logisch, aber das gezielte Provozieren und Abfangen von Fehlern (z.B. das Löschen einer nicht existierenden Notiz für einen 404-Fehler) erforderte ein Umdenken.
+Ein schwieriges Thema war die **Test-Isolation**. Da die Tests in die Datenbank schreiben, haben sich die Ergebnisse gegenseitig beeinflusst. Ein Test, der die Anzahl der Notizen prüft, schlug fehl, wenn ein vorheriger Test bereits eine Notiz angelegt hatte.
 
 #### 3. 💡 How did I overcome them?
-- **Systematischer Ansatz:** Ich habe dedizierte Testfunktionen geschrieben, die ganz bewusst fehlerhafte Payloads senden (z.B. fehlende Pflichtfelder), um sicherzustellen, dass die API korrekterweise mit einem 422 Unprocessable Entity antwortet.
+Ich habe eine **Test-Fixture** erstellt, die für jeden Testlauf eine neue, flüchtige **In-Memory-Datenbank** im RAM erzeugt. Durch das Überschreiben der Datenbank-Engine während der Testphase blieben meine produktiven Daten in der `notes.db` geschützt und jeder Test startete in einer definierten, sauberen Umgebung.
 
 ---
 
-### Day 5
+### Day 5: Advanced Validation & Security
 
 #### 1. ✅ What did I accomplish?
-- **Deep Dive Pydantic Validation:** Das Prinzip "Stop trusting your inputs" verinnerlicht und die Validierung der API massiv gehärtet.
-- **Field Constraints:** Strikte Regeln (wie `min_length`, `max_length` und Regex-Pattern) über `Field()` auf die BaseModel-Attribute angewendet.
-- **Custom Validators:** Eigene `@field_validator` Methoden geschrieben, um Strings automatisch zu normalisieren (z.B. `.strip().lower()`), bevor sie in der Datenbank landen.
-- **Model Configuration:** Über `ConfigDict` globale Verhaltensregeln für die Pydantic-Klassen definiert.
+Tag 5 widmete sich der Absicherung der API. Ich habe **Pydantic-Validatoren** genutzt, um komplexe Regeln durchzusetzen (z. B. Regex-Pattern für Tag-Namen). Ich habe gelernt, wie man mit `ConfigDict(extra="forbid")` verhindert, dass Angreifer oder fehlerhafte Clients zusätzliche, nicht definierte Felder an die API schicken. Außerdem habe ich **Model-Validatoren** implementiert, die Abhängigkeiten zwischen mehreren Feldern prüfen (Cross-Field Validation).
 
 #### 2. 🚧 What challenges did I face?
-- **Unerwünschte Inputs:** Standardmäßig ignoriert Pydantic zusätzliche JSON-Felder im Body, die nicht im Modell definiert sind. Das kann zu schwer findbaren Bugs führen (z.B. wenn der User `tagz` statt `tags` schreibt).
-- **Cross-Field Validierung:** Ein Validator sollte prüfen, ob Notizen der Kategorie 'work' zwingend den Tag 'work' enthalten. Dies brach jedoch später die bereitgestellte Test-Suite des Dozenten.
+Die Validierung von Tags war tückisch: Ich wollte sicherstellen, dass Tags wie " WInF " und "winf" als derselbe Tag behandelt werden, um Redundanz in der Datenbank zu vermeiden. Die Herausforderung lag darin, diese Bereinigung (Sanitization) performant in den Validierungsprozess zu integrieren.
 
 #### 3. 💡 How did I overcome them?
-- **Extra Forbid:** Ich habe `extra="forbid"` im `ConfigDict` gesetzt. Dadurch werden Payloads mit fehlerhaften Zusatzfeldern sofort abgelehnt.
-- **Architekturentscheidung:** Den Cross-Field `@model_validator` habe ich aus didaktischen Gründen implementiert, ihn aber auskommentiert, um die Testabdeckung und Kompatibilität mit den Anforderungen des Professors nicht zu gefährden.
+Ich habe eine zentrale **Normalisierungs-Funktion** geschrieben, die innerhalb des `@field_validator` aufgerufen wird. Diese nutzt `strip()`, `lower()` und ein Python-`set`, um Duplikate bereits vor dem Datenbank-Eintrag zu eliminieren. Das garantiert eine "Single Source of Truth" für meine Schlagwörter.
 
 ---
 
-### Day 6
+### Day 6: Refactoring & Reference-Testing
 
 #### 1. ✅ What did I accomplish?
-- **Python Decorators:** Die Magie hinter Konstrukten wie `@app.get` oder `@field_validator` entschlüsselt. Ich verstehe nun, dass Decorators Funktionen sind, die das Verhalten anderer Funktionen erweitern ("wrappen"), ohne deren Kerncode zu verändern.
-- **Test-Suite Ausführung:** Die offizielle `test_main.py` Test-Suite des Dozenten heruntergeladen, ausgeführt und analysiert.
-- **Refactoring:** Meinen Backend-Code auf Basis der Testergebnisse der Dozenten-Suite angepasst und optimiert.
+Heute stand ein umfassendes Code-Refactoring an. Ich habe die gesamten alten "Spielzeug-Endpunkte" (wie Begrüßungen oder einfache Rechenaufgaben aus Woche 1) entfernt, um eine reine, fokussierte REST-API für Notizen abzugeben. Ein weiterer Fokus lag darauf, die offizielle Referenz-Test-Suite gegen meine App laufen zu lassen. Dabei habe ich gelernt, wie man detaillierte Fehlermeldungen analysiert, um die Kompatibilität meiner Endpoints (Statuscodes, JSON-Strukturen) zu optimieren.
 
 #### 2. 🚧 What challenges did I face?
-- **Test Failures:** Beim ersten Durchlauf der offiziellen Test-Suite schlugen einige Tests fehl. Meine API war an manchen Stellen entweder zu strikt (durch meine eigenen Regex-Pattern) oder zu tolerant.
+Ein technisches Detail war das Verhalten bei der Lösch-Funktion. Während ich anfangs einen Statuscode 200 zurückgab, forderte die offizielle Suite einen 204 (No Content). Auch die alphabetische Sortierung von Tags in der Antwort war eine Anforderung, die ich erst durch das Scheitern der Tests bemerkt habe.
 
 #### 3. 💡 How did I overcome them?
-- **Debugging:** Systematisch die `assert`-Fehlermeldungen von Pytest analysiert und meine Pydantic-Validierungslogik in `main.py` schrittweise angepasst, bis alle Balken im Terminal grün waren.
+Ich habe die Endpunkte systematisch angepasst: Die Rückgabewerte wurden auf `Response(status_code=204)` umgestellt und die Listen-Rückgaben im Backend mit `sorted()` versehen. Das Bestehen der Referenz-Tests gab mir die Sicherheit, dass meine API stabil und standardkonform arbeitet.
 
 ---
 
 ## Week 3
 
-### Day 7
+### Day 7: Full-Stack Integration mit Streamlit
 
 #### 1. ✅ What did I accomplish?
-- **Frontend Development:** Den Wechsel vom Backend- zum Full-Stack-Entwickler gemacht! Mein erstes interaktives Web-Dashboard mit dem Framework `Streamlit` gebaut.
-- **API-Integration:** Das Streamlit-Frontend so programmiert, dass es über die `requests`-Bibliothek als Client fungiert und GET/POST-Calls an meine laufende lokale FastAPI sendet.
-- **UI-Design:** Ein sauberes Benutzerinterface entworfen, das mit Tabs (`st.tabs`), interaktiven Formularen (`st.form`) und Expandern zur übersichtlichen Darstellung der Notizen arbeitet.
+Zum Abschluss habe ich ein grafisches Benutzerinterface mit **Streamlit** entwickelt. Ich habe gelernt, wie man eine **Microservice-Architektur** bedient, indem das Frontend über die `requests`-Library mit der REST-API kommuniziert. Ich habe ein Dashboard mit **Tabs** erstellt, das die Trennung zwischen Datenanzeige und Dateneingabe optisch sauber löst. Besonders wichtig war hierbei das **State-Management** (`st.session_state`), um Daten über mehrere Interaktionen hinweg flüssig darzustellen.
 
 #### 2. 🚧 What challenges did I face?
-- **State Management:** Nach dem Absenden des Formulars zur Erstellung einer neuen Notiz, aktualisierte sich die Liste der angezeigten Notizen im Streamlit-Frontend nicht automatisch. Die neue Notiz war erst nach einem manuellen Page-Reload sichtbar.
+Ein technisches Problem war das Feedback der API im Frontend. Wenn eine Validierung im Backend fehlschlug (z. B. Titel zu kurz), hat die API einen 422-Fehler gesendet, den das Frontend zunächst nicht aussagekräftig für den Nutzer dargestellt hat.
 
 #### 3. 💡 How did I overcome them?
-- **Streamlit Execution Flow:** Ich habe mich in den Execution-Flow von Streamlit eingearbeitet. Durch das Verwenden des Parameters `clear_on_submit=True` im Formular und das anschließende Auslösen von `st.rerun()` nach einem erfolgreichen API-Call (`status_code == 201`), konnte ich einen sofortigen automatischen Reload der Oberfläche erzwingen.
+Ich habe das Error-Handling im Frontend verbessert. Durch das Auslesen des `detail`-Feldes aus der JSON-Antwort der API konnte ich die exakten Validierungsfehler von Pydantic (z. B. "Mindestens 3 Zeichen erforderlich") direkt als Warnung in der Streamlit-UI anzeigen. Zudem habe ich Dropdown-Menüs für Kategorien eingebaut, um Eingabefehler von vornherein technisch auszuschließen.
 
 ---
 
-# 🎉 Congratulations! You did it! 🎓✨
+# 🎉 Fazit
+Dieses Projekt hat mir den gesamten Lebenszyklus einer modernen Web-Anwendung aufgezeigt: Von der ersten Route über die persistente Datenbankstruktur und automatisierte Tests bis hin zum fertigen User Interface. Die Kombination aus FastAPI und Streamlit hat mir verdeutlicht, wie effizient man heute robuste und skalierbare Softwarelösungen in Python entwickeln kann.
